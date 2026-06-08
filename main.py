@@ -18,6 +18,7 @@ from theme import STYLESHEET
 from pages import (
     LoginPage, RegisterPage, ForgotPasswordPage,
     ProfilePage, StatsPage, SettingsPage, WorkspacePage,
+    SessionSelectPage,
 )
 
 
@@ -67,7 +68,11 @@ class MainApp(QMainWindow):
         self._engine: BiometricEngine | None = None
         self._cam_thread: CameraThread | None = None
 
-        self._show(self._IDX_LOGIN)
+        username = storage.load_session_token()
+        if username:
+            self._on_login(username)
+        else:
+            self._show(self._IDX_LOGIN)
 
     # ──────────────────────────────────────────
     # Auth events
@@ -79,6 +84,7 @@ class MainApp(QMainWindow):
 
     def _on_logout(self) -> None:
         """Stop camera, tear down user pages, go back to login."""
+        storage.clear_session_token()
         if self._cam_thread:
             self._cam_thread.stop()
             self._cam_thread = None
@@ -101,19 +107,28 @@ class MainApp(QMainWindow):
         self._engine = BiometricEngine()
         self._cam_thread = CameraThread(self._engine)
 
+        self._select_pg    = SessionSelectPage()
         self._workspace_pg = WorkspacePage(username, self._engine)
         self._profile_pg   = ProfilePage(username)
         self._stats_pg     = StatsPage(username)
         self._settings_pg  = SettingsPage(username)
 
-        for pg in [self._workspace_pg, self._profile_pg,
+        for pg in [self._select_pg, self._workspace_pg, self._profile_pg,
                    self._stats_pg, self._settings_pg]:
             self._stack.addWidget(pg)
+
+        # Wire session select
+        self._select_pg.sig_start_session.connect(self._start_session)
+        self._select_pg.sig_show_stats.connect(self._show_stats)
+        self._select_pg.sig_show_profile.connect(self._show_profile)
+        self._select_pg.sig_show_settings.connect(self._show_settings)
 
         # Workspace navigation signals
         self._workspace_pg.sig_show_stats.connect(self._show_stats)
         self._workspace_pg.sig_show_profile.connect(self._show_profile)
         self._workspace_pg.sig_show_settings.connect(self._show_settings)
+        self._workspace_pg.sig_session_ended.connect(self._show_select_page)
+        self._workspace_pg.sig_session_ended.connect(self._stop_camera)
 
         # Profile signals
         self._profile_pg.sig_back.connect(self._show_workspace)
@@ -138,12 +153,19 @@ class MainApp(QMainWindow):
         # (polled via a simple property check every frame)
         self._cam_thread.frame_ready.connect(self._sync_cam_active)
 
-        self._cam_thread.start()
-        self._show_workspace()
+        self._show_select_page()
 
     def _sync_cam_active(self, _frame) -> None:
         if self._cam_thread:
             self._cam_thread.active = self._workspace_pg.is_active
+
+    def _start_camera(self) -> None:
+        if self._cam_thread:
+            self._cam_thread.restart()
+
+    def _stop_camera(self) -> None:
+        if self._cam_thread and self._cam_thread.isRunning():
+            self._cam_thread.stop()
 
     # ──────────────────────────────────────────
     # Page navigation helpers
@@ -157,22 +179,19 @@ class MainApp(QMainWindow):
         self._workspace_pg.refresh_plan()
 
     def _show_profile(self) -> None:
-        # Rebuild profile page to reflect latest DB state
-        self._stack.removeWidget(self._profile_pg)
-        self._profile_pg.deleteLater()
-        self._profile_pg = ProfilePage(self._username)
-        self._profile_pg.sig_back.connect(self._show_workspace)
-        self._profile_pg.sig_logout.connect(self._on_logout)
-        self._stack.addWidget(self._profile_pg)
+        self._profile_pg.refresh()
         self._stack.setCurrentWidget(self._profile_pg)
 
+    def _show_select_page(self) -> None:
+        self._stack.setCurrentWidget(self._select_pg)
+
+    def _start_session(self, mode: str, study_mins: int, break_mins: int) -> None:
+        self._workspace_pg.set_session_mode(mode, study_mins, break_mins)
+        self._show_workspace()
+        self._start_camera()
+
     def _show_stats(self) -> None:
-        # Rebuild to fetch latest data
-        self._stack.removeWidget(self._stats_pg)
-        self._stats_pg.deleteLater()
-        self._stats_pg = StatsPage(self._username)
-        self._stats_pg.sig_back.connect(self._show_workspace)
-        self._stack.addWidget(self._stats_pg)
+        self._stats_pg.refresh()
         self._stack.setCurrentWidget(self._stats_pg)
 
     def _show_settings(self) -> None:

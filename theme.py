@@ -9,17 +9,25 @@ Import PALETTE and STYLESHEET everywhere; do not hardcode colours in widgets.
 # ──────────────────────────────────────────────
 
 PALETTE = {
-    "bg_deep":    "#080B14",   # outermost background
-    "bg_panel":   "#0F1221",   # card / panel background
-    "bg_input":   "#161929",   # text-input background
-    "border":     "#1E2540",   # subtle borders
-    "accent":     "#10B981",   # primary green accent
-    "accent_dim": "#059669",   # darker accent for hover
-    "danger":     "#EF4444",
-    "warning":    "#F59E0B",
-    "text_hi":    "#E8EDF5",   # high-emphasis text
-    "text_med":   "#8B95A8",   # medium-emphasis / labels
-    "text_lo":    "#3D4663",   # low-emphasis / disabled
+    # Backgrounds
+    "bg_deep":    "#081C15",   # evergreen
+    "bg_panel":   "#1B4332",   # pine teal
+    "bg_input":   "#2D6A4F",   # dark emerald
+
+    # Borders & accents
+    "border":     "#40916C",
+    "accent":     "#74C69D",
+    "accent_dim": "#52B788",
+
+    # Status colors
+    "danger":     "#E76F51",
+    "warning":    "#F4A261",
+
+    # Text
+    "text_hi":    "#D8F3DC",
+    "text_med":   "#B7E4C7",
+    "text_lo":    "#95D5B2",
+
     "white":      "#FFFFFF",
 }
 
@@ -35,169 +43,223 @@ AVATAR_COLORS = [
 # ──────────────────────────────────────────────
 
 STYLESHEET = f"""
-/* ── Root ─────────────────────────────────── */
+/* =====================================================
+   ROOT
+===================================================== */
+
 QMainWindow, QDialog, QWidget {{
     background-color: {PALETTE['bg_deep']};
     color: {PALETTE['text_hi']};
-    font-family: 'Segoe UI', 'Ubuntu', sans-serif;
-    font-size: 13px;
+    font-family: 'Segoe UI';
+    font-size: 15px;
 }}
 
-/* ── Labels ───────────────────────────────── */
+/* =====================================================
+   LABELS
+===================================================== */
+
 QLabel {{
-    color: {PALETTE['text_hi']};
     background: transparent;
+    color: {PALETTE['text_hi']};
 }}
-QLabel#label_muted {{
-    color: {PALETTE['text_med']};
-    font-size: 11px;
-}}
+
 QLabel#label_heading {{
-    color: {PALETTE['accent']};
-    font-size: 26px;
-    font-weight: 700;
-    letter-spacing: 1px;
-}}
-QLabel#label_subheading {{
-    color: {PALETTE['text_med']};
-    font-size: 13px;
-}}
-QLabel#label_stat {{
-    color: {PALETTE['white']};
+    color: {PALETTE['text_hi']};
     font-size: 28px;
     font-weight: 700;
 }}
-QLabel#label_error {{
-    color: {PALETTE['danger']};
-    font-size: 12px;
-}}
-QLabel#label_success {{
-    color: {PALETTE['accent']};
-    font-size: 12px;
+
+QLabel#label_subheading {{
+    color: {PALETTE['text_med']};
+    font-size: 15px;
 }}
 
-/* ── Input fields ─────────────────────────── */
-QLineEdit, QComboBox, QTextEdit {{
-    background-color: {PALETTE['bg_input']};
-    border: 1px solid {PALETTE['border']};
-    border-radius: 8px;
-    padding: 10px 14px;
-    color: {PALETTE['text_hi']};
-    selection-background-color: {PALETTE['accent']};
+QLabel#label_muted {{
+    color: {PALETTE['text_med']};
+    font-size: 13px;
 }}
-QLineEdit:focus, QComboBox:focus, QTextEdit:focus {{
+
+QLabel#label_stat {{
+    color: {PALETTE['text_hi']};
+    font-size: 34px;
+    font-weight: 700;
+}}
+
+QLabel#label_error {{
+    color: {PALETTE['danger']};
+}}
+
+QLabel#label_success {{
+    color: {PALETTE['accent']};
+}}
+
+/* =====================================================
+   CARDS
+===================================================== */
+
+QFrame#card {{
+    background-color: {PALETTE['bg_panel']};
+    border: 1px solid rgba(183,228,199,0.12);
+    border-radius: 18px;
+}}
+
+QScrollArea {{
+    border: none;
+}}
+
+/* =====================================================
+   INPUTS
+===================================================== */
+
+QLineEdit,
+QComboBox,
+QDoubleSpinBox,
+QSpinBox {{
+    background-color: {PALETTE['bg_input']};
+    color: {PALETTE['text_hi']};
+
+    border: 1px solid rgba(183,228,199,0.15);
+    border-radius: 12px;
+
+    padding: 10px 14px;
+}}
+
+QLineEdit:focus,
+QComboBox:focus,
+QDoubleSpinBox:focus,
+QSpinBox:focus {{
     border: 1px solid {PALETTE['accent']};
 }}
+
 QComboBox::drop-down {{
     border: none;
-    padding-right: 8px;
 }}
+
 QComboBox QAbstractItemView {{
     background: {PALETTE['bg_panel']};
     color: {PALETTE['text_hi']};
-    selection-background-color: {PALETTE['accent']};
     border: 1px solid {PALETTE['border']};
+    selection-background-color: {PALETTE['accent']};
 }}
 
-/* ── Buttons ──────────────────────────────── */
+/* =====================================================
+   BUTTONS
+===================================================== */
+
 QPushButton {{
     background-color: {PALETTE['accent']};
-    color: #000000;
-    font-weight: 700;
+
+    color: {PALETTE['bg_deep']};
+
     border: none;
-    border-radius: 8px;
+    border-radius: 12px;
+
     padding: 11px 22px;
-    letter-spacing: 0.5px;
+
+    font-weight: 700;
 }}
+
 QPushButton:hover {{
     background-color: {PALETTE['accent_dim']};
 }}
+
 QPushButton:pressed {{
-    background-color: #047857;
+    padding-top: 12px;
 }}
+
 QPushButton#btn_secondary {{
     background-color: {PALETTE['bg_panel']};
     color: {PALETTE['text_hi']};
-    border: 1px solid {PALETTE['border']};
+
+    border: 1px solid rgba(183,228,199,0.15);
 }}
+
 QPushButton#btn_secondary:hover {{
-    border-color: {PALETTE['accent']};
-    color: {PALETTE['accent']};
+    border: 1px solid {PALETTE['accent']};
 }}
+
 QPushButton#btn_danger {{
     background-color: {PALETTE['danger']};
     color: white;
 }}
+
 QPushButton#btn_danger:hover {{
-    background-color: #DC2626;
+    background-color: #D65D40;
 }}
+
 QPushButton#btn_ghost {{
-    background-color: transparent;
-    color: {PALETTE['accent']};
+    background: transparent;
     border: none;
-    padding: 4px 0px;
-    font-size: 12px;
-    text-align: left;
+
+    color: {PALETTE['accent']};
+
+    font-size: 14px;
 }}
+
 QPushButton#btn_ghost:hover {{
     color: {PALETTE['text_hi']};
 }}
 
-/* ── Cards / Frames ───────────────────────── */
-QFrame#card {{
-    background-color: {PALETTE['bg_panel']};
-    border: 1px solid {PALETTE['border']};
-    border-radius: 12px;
-}}
+/* =====================================================
+   TABLES
+===================================================== */
 
-/* ── Table ────────────────────────────────── */
 QTableWidget {{
     background-color: {PALETTE['bg_panel']};
-    color: {PALETTE['text_hi']};
-    gridline-color: {PALETTE['border']};
-    border: 1px solid {PALETTE['border']};
-    border-radius: 10px;
-}}
-QTableWidget::item:selected {{
-    background-color: rgba(16,185,129,0.2);
-    color: {PALETTE['white']};
-}}
-QHeaderView::section {{
-    background-color: {PALETTE['bg_deep']};
-    color: {PALETTE['text_med']};
-    padding: 8px;
-    border: none;
-    border-bottom: 1px solid {PALETTE['border']};
-    font-weight: 600;
-    text-transform: uppercase;
-    font-size: 11px;
-    letter-spacing: 0.5px;
+
+    border: 1px solid rgba(183,228,199,0.10);
+    border-radius: 14px;
+
+    gridline-color: rgba(183,228,199,0.05);
 }}
 
-/* ── Scrollbars ───────────────────────────── */
+QHeaderView::section {{
+    background-color: {PALETTE['bg_input']};
+
+    border: none;
+
+    padding: 10px;
+
+    color: {PALETTE['text_hi']};
+
+    font-weight: 600;
+}}
+
+QTableWidget::item {{
+    padding: 8px;
+}}
+
+/* =====================================================
+   SCROLLBARS
+===================================================== */
+
 QScrollBar:vertical {{
     background: transparent;
-    width: 6px;
-    margin: 0;
-}}
-QScrollBar::handle:vertical {{
-    background: {PALETTE['border']};
-    border-radius: 3px;
-    min-height: 20px;
-}}
-QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
-    height: 0;
+    width: 10px;
 }}
 
-/* ── Spinbox ──────────────────────────────── */
-QDoubleSpinBox, QSpinBox {{
-    background-color: {PALETTE['bg_input']};
-    border: 1px solid {PALETTE['border']};
-    border-radius: 8px;
-    padding: 8px 12px;
-    color: {PALETTE['text_hi']};
+QScrollBar::handle:vertical {{
+    background: {PALETTE['accent_dim']};
+    border-radius: 5px;
 }}
-QDoubleSpinBox:focus, QSpinBox:focus {{
-    border: 1px solid {PALETTE['accent']};
+
+QScrollBar::add-line:vertical,
+QScrollBar::sub-line:vertical {{
+    height: 0px;
+}}
+
+QScrollBar:horizontal {{
+    background: transparent;
+    height: 10px;
+}}
+
+QScrollBar::handle:horizontal {{
+    background: {PALETTE['accent_dim']};
+    border-radius: 5px;
+}}
+
+QScrollBar::add-line:horizontal,
+QScrollBar::sub-line:horizontal {{
+    width: 0px;
 }}
 """

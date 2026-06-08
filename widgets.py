@@ -18,77 +18,57 @@ class HDivider(QFrame):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setFrameShape(QFrame.Shape.HLine)
-        self.setStyleSheet(f"color: {PALETTE['border']}; margin: 4px 0;")
-
-
-# ──────────────────────────────────────────────
-# Stat card  (number + label stacked)
-# ──────────────────────────────────────────────
+        self.setStyleSheet("color: rgba(183,228,199,0.12); margin: 8px 0;")
 
 class StatCard(QFrame):
-    def __init__(self, title: str, value: str = "—", unit: str = "", parent=None):
+    def __init__(self, title, value='—', unit='', parent=None):
         super().__init__(parent)
-        self.setObjectName("card")
-        self.setFixedHeight(100)
+        self.setObjectName('card')
+        self.setMinimumHeight(120)
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(18, 14, 18, 14)
-        layout.setSpacing(4)
+        layout.setContentsMargins(20,18,20,18)
 
         self._val_label = QLabel(value)
-        self._val_label.setObjectName("label_stat")
-        self._val_label.setFont(QFont("Consolas", 24, QFont.Weight.Bold))
+        self._val_label.setObjectName('label_stat')
+        self._val_label.setFont(QFont('Segoe UI', 28, QFont.Weight.Bold))
 
         title_row = QHBoxLayout()
-        lbl_title = QLabel(title.upper())
-        lbl_title.setObjectName("label_muted")
-        lbl_title.setFont(QFont("Segoe UI", 9, QFont.Weight.Normal))
-        title_row.addWidget(lbl_title)
+        title_row.addWidget(QLabel(title))
         if unit:
-            lbl_unit = QLabel(unit)
-            lbl_unit.setObjectName("label_muted")
-            title_row.addWidget(lbl_unit)
+            title_row.addWidget(QLabel(unit))
         title_row.addStretch()
 
         layout.addWidget(self._val_label)
         layout.addLayout(title_row)
 
-    def set_value(self, v: str) -> None:
+    def set_value(self, v):
         self._val_label.setText(v)
 
-
-# ──────────────────────────────────────────────
-# Avatar circle (painted widget)
-# ──────────────────────────────────────────────
-
 class AvatarCircle(QWidget):
-    """Circular coloured avatar with initials."""
-
-    def __init__(self, initials: str = "?", color: str = "#10B981",
-                 size: int = 64, parent=None):
+    def __init__(self, initials='?', color='#74C69D', size=64, parent=None):
         super().__init__(parent)
         self._initials = initials[:2].upper()
         self._color = QColor(color)
         self._size = size
         self.setFixedSize(size, size)
 
-    def set_color(self, color: str) -> None:
+    def set_color(self, color):
         self._color = QColor(color)
         self.update()
 
-    def set_initials(self, initials: str) -> None:
+    def set_initials(self, initials):
         self._initials = initials[:2].upper()
         self.update()
 
     def paintEvent(self, event):
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        p.setBrush(QBrush(self._color))
         p.setPen(Qt.PenStyle.NoPen)
-        p.drawEllipse(0, 0, self._size, self._size)
-        p.setPen(QColor("#000000"))
-        font = QFont("Segoe UI", self._size // 3, QFont.Weight.Bold)
-        p.setFont(font)
+        p.setBrush(QBrush(self._color))
+        p.drawEllipse(2, 2, self._size - 4, self._size - 4)
+        p.setPen(QColor(PALETTE['bg_deep']))
+        p.setFont(QFont('Segoe UI', self._size // 3, QFont.Weight.Bold))
         p.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, self._initials)
         p.end()
 

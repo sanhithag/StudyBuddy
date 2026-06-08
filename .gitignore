@@ -1,0 +1,21 @@
+# Virtual environment
+venv/
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Database
+studybuddy.db
+
+# Data files
+data/
+
+# Assets (only if these are large/generated files)
+assets/
+
+# Environment variables
+.env
+
+# VS Code
+.vscode/

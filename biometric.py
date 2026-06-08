@@ -1,14 +1,57 @@
 """
-biometric.py — StudyBuddy AI
-Full detection pipeline:
-  1. Face presence
-  2. Drowsiness  (EAR + frame buffer)
-  3. Distraction (head-pose yaw/pitch via solvePnP, frame buffer)
-  4. Fatigue     (high blink frequency + AIE transition counter)
-  5. Posture      (ear-shoulder ratio via MediaPipe Pose)
+===============================================================================
+FILE: biometric.py
+===============================================================================
 
-Priority order (checked top-to-bottom, first match wins):
-  FACE NOT FOUND → DROWSY → NOT FOCUSED → FATIGUED → POOR POSTURE → Focused
+MODULE PURPOSE
+--------------
+This module is the core biometric monitoring engine used by StudyBuddy AI.
+
+It performs real-time behavioral analysis using webcam input and MediaPipe
+landmark detection models.
+
+DETECTION FEATURES
+------------------
+1. Face Presence Detection
+2. Drowsiness Detection (EAR)
+3. Distraction Detection (Head Pose)
+4. Fatigue Detection (Blink Rate + Focus Transitions)
+5. Posture Detection (Ear-Shoulder Alignment)
+
+STATE PRIORITY
+--------------
+FACE NOT FOUND
+    ↓
+WARNING: DROWSY
+    ↓
+NOT FOCUSED
+    ↓
+FATIGUED
+    ↓
+POOR POSTURE
+    ↓
+Focused
+
+MAIN COMPONENTS
+---------------
+- Model Management
+- Threshold Configuration
+- Sound Alert System
+- Face Landmark Processing
+- Head Pose Estimation
+- Blink Tracking
+- Fatigue Analysis
+- Posture Analysis
+- Focus Analytics
+- HUD Rendering
+
+USED BY
+--------
+- camera_thread.py
+- workspace page
+- study session monitor
+
+===============================================================================
 """
 
 import math
@@ -66,26 +109,32 @@ def ensure_models(progress_cb=None) -> None:
 EAR_CLOSED_THRESH   = 0.20   # EAR below this → eye closed
 DROWSY_FRAMES       = 20     # consecutive closed frames → drowsy (~0.7 s)
 
-GAZE_YAW_THRESH   = 35.0     # Allows more side-to-side movement
-GAZE_PITCH_THRESH = 30.0     # Allows more up/down movement
+GAZE_YAW_THRESH   = 35.0
+GAZE_PITCH_THRESH = 30.0
 DISTRACT_FRAMES   = 90       # ~3 seconds of looking away
 
-BLINK_WINDOW_SECS   = 60     # rolling window for blink rate
+BLINK_WINDOW_SECS   = 60
 HIGH_BLINK_RATE     = 25     # blinks/min above this → eye fatigue
 
-SLOUCH_RATIO_THRESH = 0.12   # ear-above-shoulder ratio below this → slouch
-POSTURE_FRAMES       = 90     # frames of bad posture before alert
+SLOUCH_RATIO_THRESH = 0.12
+POSTURE_FRAMES       = 90
 
-FATIGUE_TRANSITIONS   = 3    # focus→distracted transitions in 15m window
-FATIGUE_WINDOW_SECS   = 900  # 15-minute AIE window
-BLINK_MIN_WINDOW_SECS = 30   # wait for enough observation time
+# FIX #1 — fatigue transitions tracked in a rolling window; once the window
+# expires (no new unfocused events) the state clears automatically.
+FATIGUE_TRANSITIONS   = 3
+FATIGUE_WINDOW_SECS   = 900   # 15-minute rolling window
+# After recovering from FATIGUED, don't re-enter it for at least this long
+# (prevents instant re-trigger before blink-rate data refreshes).
+FATIGUE_CLEAR_SECS    = 30
 
-# --- TAKE A BREAK INTERVENTION ---
-BREAK_TRANSITIONS     = 3      
-BREAK_WINDOW_SECS     = 300  # 5-minute window for frequent switches
-# ---------------------------------
+BLINK_MIN_WINDOW_SECS = 30
 
-ALERT_COOLDOWN_SECS = 8      # seconds between repeat sound alerts
+# TAKE A BREAK is managed by WorkspacePage via recent_transition_count().
+BREAK_TRANSITIONS     = 3
+BREAK_WINDOW_SECS     = 300   # 5-minute window used by WorkspacePage
+
+ALERT_COOLDOWN_SECS = 8
+
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Sound alerts
@@ -97,7 +146,7 @@ _ALERT_SOUNDS = {
     "NOT FOCUSED":     [(880, 150), (880, 150), (880, 150)],
     "FATIGUED":        [(550, 400)],
     "POOR POSTURE":    [(660, 300), (500, 300)],
-    "TAKE A BREAK":    [(550, 400), (440, 400)], # New specific sound pattern
+    "TAKE A BREAK":    [(550, 400), (440, 400)],
 }
 
 
@@ -137,12 +186,12 @@ _L_EYE = [33,  160, 158, 133, 153, 144]
 _R_EYE = [362, 385, 387, 263, 373, 380]
 
 _FACE_3D = np.array([
-    [ 0.0,    0.0,    0.0 ],   # nose tip
-    [ 0.0,  -330.0,  -65.0],   # chin
-    [-225.0,  170.0,-135.0],   # L eye left
-    [ 225.0,  170.0,-135.0],   # R eye right
-    [-150.0, -150.0,-125.0],   # L mouth
-    [ 150.0, -150.0,-125.0],   # R mouth
+    [ 0.0,    0.0,    0.0 ],
+    [ 0.0,  -330.0,  -65.0],
+    [-225.0,  170.0,-135.0],
+    [ 225.0,  170.0,-135.0],
+    [-150.0, -150.0,-125.0],
+    [ 150.0, -150.0,-125.0],
 ], dtype=np.float64)
 _FACE_2D_IDX = [1, 152, 263, 33, 287, 57]
 
@@ -180,11 +229,14 @@ class BiometricEngine:
         self.break_mins: int = 10
 
         self._focus_records: list[int] = []
-        self._transition_times: list[float] = []
+        self._transition_times: list[float] = []   # focus→unfocused timestamps
         self._prev_focused: bool = True
-        
-        # UI Control Flags
-        self.should_pause_timer: bool = False
+
+        # FIX #1: track when fatigue was last cleared so we don't
+        # re-enter it instantly before blink-rate data refreshes.
+        self._fatigue_cleared_at: float = 0.0
+
+        self._lock = threading.Lock()   # protects shared mutable state
 
         self._drowsy_frames:   int = 0
         self._distract_frames: int = 0
@@ -206,11 +258,32 @@ class BiometricEngine:
         self._frame_ts: int = 0
         self._session_start: float = time.time()
 
+        self.fatigue_pause_requested = False
+        self.fatigue_triggered = False
+        self.fatigue_events = 0
+        self.fatigue_score = 0
+
+    # ── public helpers ────────────────────────────────────────────────────────
+
     def calibrate_center(self):
-        self.offset_yaw += self.raw_metrics['yaw']
-        self.offset_pitch += self.raw_metrics['pitch']
+        """Set the neutral gaze offsets to the current raw yaw/pitch values.
+
+        Calling this more than once replaces the previous calibration rather
+        than accumulating corrections, which would double the offset on each
+        subsequent call.
+        """
+        self.offset_yaw   = self.raw_metrics['yaw']
+        self.offset_pitch = self.raw_metrics['pitch']
         self._distract_frames = 0
-        self._posture_frames = 0
+        self._posture_frames  = 0
+
+    def recent_transition_count(self, window_secs: float = BREAK_WINDOW_SECS) -> int:
+        """Number of focus→unfocused transitions in the last `window_secs`."""
+        now = time.time()
+        with self._lock:
+            return sum(1 for t in self._transition_times if now - t < window_secs)
+
+    # ── main processing loop ──────────────────────────────────────────────────
 
     def process_frame(self, frame: np.ndarray, active: bool) -> np.ndarray:
         if not active:
@@ -219,7 +292,7 @@ class BiometricEngine:
             return frame
 
         h, w = frame.shape[:2]
-        self._frame_ts += 33
+        self._frame_ts = int(time.time() * 1000)
 
         mp_img = mp.Image(
             image_format=mp.ImageFormat.SRGB,
@@ -230,16 +303,18 @@ class BiometricEngine:
         pose_res = self._pose_det.detect_for_video(mp_img, self._frame_ts)
 
         if not face_res.face_landmarks:
-            self._drowsy_frames = self._distract_frames = 0
+            # FIX: also reset posture frames when face is lost so the
+            # posture counter doesn't persist across face-absent gaps.
+            self._drowsy_frames = self._distract_frames = self._posture_frames = 0
             self._set_state("FACE NOT FOUND", focused=False)
             return frame
 
         lms = face_res.face_landmarks[0]
 
-        ear         = self._calc_ear(lms, w, h)
-        yaw, pitch  = self._head_pose(lms, w, h)
-        bpm         = self._update_blinks(ear)
-        slouch      = self._check_posture(pose_res, w, h)
+        ear        = self._calc_ear(lms, w, h)
+        yaw, pitch = self._head_pose(lms, w, h)
+        bpm        = self._update_blinks(ear)
+        slouch     = self._check_posture(pose_res, w, h)
 
         self.last_ear = ear
         self.raw_metrics = {
@@ -271,18 +346,53 @@ class BiometricEngine:
 
         # 3. Fatigue
         now = time.time()
-        # Clean transition list for the 15-minute window
-        self._transition_times = [t for t in self._transition_times if now - t < FATIGUE_WINDOW_SECS]
-        
-        if len(self._transition_times) >= FATIGUE_TRANSITIONS or bpm >= HIGH_BLINK_RATE:
-            self._set_state("FATIGUED", focused=False)
-            return frame
+
+        # Prune transition list to rolling window
+        self._transition_times = [
+            t for t in self._transition_times if now - t < FATIGUE_WINDOW_SECS
+        ]
+
+        transition_fatigue = len(self._transition_times) >= FATIGUE_TRANSITIONS
+        blink_fatigue      = bpm >= HIGH_BLINK_RATE
+
+        self.fatigue_score = 0
+        if bpm >= 20:
+            self.fatigue_score += 40
+        if len(self._transition_times) >= 2:
+            self.fatigue_score += 35
+        if self._drowsy_frames > DROWSY_FRAMES // 2:
+            self.fatigue_score += 25
+
+        score_fatigue = self.fatigue_score >= 75
+
+        if transition_fatigue or blink_fatigue or score_fatigue:
+            # Only enter FATIGUED if we are not inside the post-recovery cooldown
+            if (now - self._fatigue_cleared_at) >= FATIGUE_CLEAR_SECS:
+                self.fatigue_triggered = True
+                self.fatigue_pause_requested = True
+                self.fatigue_events += 1
+                self._set_state("FATIGUED", focused=False)
+                return frame
+        else:
+            # User has genuinely recovered — if we were FATIGUED, clear all
+            # fatigue data so the state does not immediately re-trigger once
+            # the cooldown expires.
+            if self.status == "FATIGUED":
+                self._fatigue_cleared_at = now
+                self._transition_times.clear()
+                # Reset blink window so stale high-blink data cannot
+                # instantly re-trigger blink_fatigue on the next frame.
+                self._blink_times.clear()
 
         # 4. Posture
         if slouch:
             self._posture_frames += 1
         else:
             self._posture_frames = max(0, self._posture_frames - 1)
+
+        # FIX: cap posture frames to prevent unbounded growth which would
+        # cause an extreme delay when clearing after the user corrects posture.
+        self._posture_frames = min(self._posture_frames, POSTURE_FRAMES * 2)
 
         if self._posture_frames >= POSTURE_FRAMES:
             self._set_state("POOR POSTURE", focused=True)
@@ -294,22 +404,16 @@ class BiometricEngine:
     def _set_state(self, state: str, focused: bool) -> None:
         now = time.time()
         grace_elapsed = now - self._session_start
-        
-        # Monitor frequent state changes (3 switches in 5 mins)
-        if self._prev_focused and not focused and grace_elapsed > 10.0:
-            self._transition_times.append(now)
-            
-            recent_transitions = [t for t in self._transition_times if now - t < BREAK_WINDOW_SECS]
-            
-            if len(recent_transitions) >= BREAK_TRANSITIONS:
-                self.status = "TAKE A BREAK"
-                self.should_pause_timer = True
-                _play_sound("TAKE A BREAK")
-                return # Priority interrupt
 
-        self._prev_focused = focused
-        self.status = state
-        self._focus_records.append(1 if focused else 0)
+        with self._lock:
+            # Record focus→unfocused transitions (used by WorkspacePage to decide
+            # whether to suggest a break).
+            if self._prev_focused and not focused and grace_elapsed > 10.0:
+                self._transition_times.append(now)
+
+            self._prev_focused = focused
+            self.status = state
+            self._focus_records.append(1 if focused else 0)
 
         is_warning = state not in ("Focused", "Paused", "Ready", "TAKE A BREAK")
         changed    = state != self._last_alerted_state
@@ -319,6 +423,8 @@ class BiometricEngine:
             _play_sound(state)
             self._last_alert_time    = now
             self._last_alerted_state = state
+
+    # ── biometric helpers ─────────────────────────────────────────────────────
 
     def _calc_ear(self, lms, w: int, h: int) -> float:
         def _ear(idx):
@@ -340,44 +446,58 @@ class BiometricEngine:
         while self._blink_times and self._blink_times[0] < cutoff:
             self._blink_times.popleft()
 
-        if not self._blink_times: return 0
+        if not self._blink_times:
+            return 0
         session_elapsed = now - self._session_start
-        if session_elapsed < BLINK_MIN_WINDOW_SECS: return 0
+        if session_elapsed < BLINK_MIN_WINDOW_SECS:
+            return 0
         elapsed = min(now - self._blink_times[0], BLINK_WINDOW_SECS)
-        if elapsed < 10: return 0
+        if elapsed < 10:
+            return 0
         return int(len(self._blink_times) / elapsed * 60)
 
     def _head_pose(self, lms, w: int, h: int) -> tuple:
-        pts2d = np.array([[lms[i].x * w, lms[i].y * h] for i in _FACE_2D_IDX], dtype=np.float64)
+        pts2d = np.array(
+            [[lms[i].x * w, lms[i].y * h] for i in _FACE_2D_IDX], dtype=np.float64
+        )
         focal = float(w)
         cam   = np.array([[focal, 0, w/2], [0, focal, h/2], [0, 0, 1]], dtype=np.float64)
         dc    = np.zeros((4, 1), dtype=np.float64)
 
-        ok, rvec, _ = cv2.solvePnP(_FACE_3D, pts2d, cam, dc, flags=cv2.SOLVEPNP_ITERATIVE)
-        if not ok: return 0.0, 0.0
+        ok, rvec, _ = cv2.solvePnP(
+            _FACE_3D, pts2d, cam, dc, flags=cv2.SOLVEPNP_ITERATIVE
+        )
+        if not ok:
+            return 0.0, 0.0
 
         rmat, _ = cv2.Rodrigues(rvec)
-        sy = math.sqrt(rmat[0, 0]**2 + rmat[1, 0]**2)
-        
+        sy = math.sqrt(rmat[0, 0] ** 2 + rmat[1, 0] ** 2)
+
         if sy > 1e-6:
-            pitch, yaw = math.atan2(-rmat[2, 0], sy), math.atan2( rmat[1, 0], rmat[0, 0])
+            pitch = math.atan2(-rmat[2, 0], sy)
+            yaw   = math.atan2( rmat[1, 0], rmat[0, 0])
         else:
-            pitch, yaw = math.atan2(-rmat[2, 0], sy), 0.0
+            pitch = math.atan2(-rmat[2, 0], sy)
+            yaw   = 0.0
 
         y_deg, p_deg = math.degrees(yaw), math.degrees(pitch)
-        if y_deg > 90: y_deg -= 180
+        if y_deg >  90: y_deg -= 180
         if y_deg < -90: y_deg += 180
 
         return y_deg - self.offset_yaw, p_deg - self.offset_pitch
 
     def _check_posture(self, pose_res, w: int, h: int) -> bool:
-        if not pose_res.pose_landmarks: return False
-        plms = pose_res.pose_landmarks[0]
-        ear_y  = (plms[_POSE_L_EAR].y + plms[_POSE_R_EAR].y) / 2 * h
-        sh_y   = (plms[_POSE_L_SHOULDER].y + plms[_POSE_R_SHOULDER].y) / 2 * h
-        sh_w   = abs(plms[_POSE_L_SHOULDER].x - plms[_POSE_R_SHOULDER].x) * w
-        if sh_w < 1: return False
+        if not pose_res.pose_landmarks:
+            return False
+        plms  = pose_res.pose_landmarks[0]
+        ear_y = (plms[_POSE_L_EAR].y + plms[_POSE_R_EAR].y) / 2 * h
+        sh_y  = (plms[_POSE_L_SHOULDER].y + plms[_POSE_R_SHOULDER].y) / 2 * h
+        sh_w  = abs(plms[_POSE_L_SHOULDER].x - plms[_POSE_R_SHOULDER].x) * w
+        if sh_w < 1:
+            return False
         return ((sh_y - ear_y) / sh_w) < SLOUCH_RATIO_THRESH
+
+    # ── session analytics ─────────────────────────────────────────────────────
 
     def update_ml_plan(self) -> float:
         score = self.focus_score()
@@ -391,14 +511,19 @@ class BiometricEngine:
         return score
 
     def reset_records(self) -> None:
-        self._focus_records.clear()
-        self._transition_times.clear()
-        self._blink_times.clear()
-        self._session_start = time.time()
+        with self._lock:
+            self._focus_records.clear()
+            self._transition_times.clear()
+            self._blink_times.clear()
+            self._fatigue_cleared_at = 0.0
+            self._session_start = time.time()
 
     def focus_score(self) -> float:
-        if not self._focus_records: return 0.0
-        return sum(self._focus_records) / len(self._focus_records) * 100
+        with self._lock:
+            if not self._focus_records:
+                return 0.0
+            return sum(self._focus_records) / len(self._focus_records) * 100
+
 
 # ──────────────────────────────────────────────────────────────────────────────
 # HUD overlay
@@ -415,13 +540,20 @@ _STATE_COLORS = {
     "Paused":          (148, 163, 184),
 }
 
+
 def draw_status_overlay(frame: np.ndarray, engine: "BiometricEngine") -> np.ndarray:
-    status, metrics, color = engine.status, engine.raw_metrics, _STATE_COLORS.get(engine.status, (239, 68, 68))
+    status  = engine.status
+    metrics = engine.raw_metrics
+    color   = _STATE_COLORS.get(status, (239, 68, 68))
     overlay = frame.copy()
     cv2.rectangle(overlay, (0, 0), (frame.shape[1], 70), (10, 12, 28), -1)
     cv2.addWeighted(overlay, 0.65, frame, 0.35, 0, frame)
-    cv2.putText(frame, status, (12, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, color, 2, cv2.LINE_AA)
-    info = (f"EAR:{metrics['ear']:.2f}  Yaw:{metrics['yaw']:+.0f}deg  "
-            f"Pitch:{metrics['pitch']:+.0f}deg  Blink:{metrics['blinks_per_min']}/min")
-    cv2.putText(frame, info, (12, 58), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (180, 190, 210), 1, cv2.LINE_AA)
+    cv2.putText(frame, status, (12, 30),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.8, color, 2, cv2.LINE_AA)
+    info = (
+        f"EAR:{metrics['ear']:.2f}  Yaw:{metrics['yaw']:+.0f}deg  "
+        f"Pitch:{metrics['pitch']:+.0f}deg  Blink:{metrics['blinks_per_min']}/min"
+    )
+    cv2.putText(frame, info, (12, 58),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.38, (180, 190, 210), 1, cv2.LINE_AA)
     return frame
